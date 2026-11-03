@@ -347,9 +347,10 @@ el.addEventListener('pointermove', e => {
   const vy = (e.clientY - lastPY) / dt;
   lastPX = e.clientX; lastPY = e.clientY; lastPT = now;
   // 横ドラッグ -> x 風, 縦ドラッグ -> z 風 (手前/奥) + 少し浮力
-  windTarget.x = THREE.MathUtils.clamp(windTarget.x + vx * 0.012, -16, 16);
-  windTarget.z = THREE.MathUtils.clamp(windTarget.z + vy * 0.012, -14, 14);
-  windTarget.y = THREE.MathUtils.clamp(windTarget.y + Math.abs(vx) * 0.0012, 0, 2.5);
+  // 速度そのものを風の目標にする (蓄積すると持続ドラッグで必ず最大まで張り付くため)
+  windTarget.x = THREE.MathUtils.clamp(vx * 0.014, -16, 16);
+  windTarget.z = THREE.MathUtils.clamp(vy * 0.013, -14, 14);
+  windTarget.y = THREE.MathUtils.clamp(Math.abs(vx) * 0.0016, 0, 2.5);
 });
 addEventListener('pointerup', () => { dragging = false; });
 
@@ -374,6 +375,7 @@ function fmtTime(s) {
   return `${m}:${String(ss).padStart(2, '0')}`;
 }
 
+let simAcc = 0;
 const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
@@ -382,15 +384,19 @@ function animate() {
 
   // 風: 目標へ寄せつつ、自然なそよ風へ減衰
   const breeze = Math.sin(t * 0.6) * 0.7 + Math.sin(t * 1.7) * 0.3;
-  windTarget.x += (breeze - windTarget.x) * dt * (dragging ? 0.4 : 1.4);
-  windTarget.z += (0 - windTarget.z) * dt * (dragging ? 0.4 : 1.4);
+  windTarget.x += (breeze - windTarget.x) * dt * (dragging ? 2.2 : 1.4);
+  windTarget.z += (0 - windTarget.z) * dt * (dragging ? 2.2 : 1.4);
   windTarget.y += (0 - windTarget.y) * dt * 1.2;
   const k = 1 - Math.exp(-dt * 7);
   wind.x += (windTarget.x - wind.x) * k;
   wind.y += (windTarget.y - wind.y) * k;
   wind.z += (windTarget.z - wind.z) * k;
 
-  if (playing) wasm.sim_step(dt, wind.x, wind.y, wind.z);
+  // 物理は固定刻み 1/60 で回す (フレームレートで挙動が変わらないように)
+  if (playing) {
+    simAcc = Math.min(simAcc + dt, 4 / 60);
+    while (simAcc >= 1 / 60) { wasm.sim_step(1 / 60, wind.x, wind.y, wind.z); simAcc -= 1 / 60; }
+  }
 
   // 布の頂点を更新
   const mem = new Float32Array(wasm.memory.buffer);
